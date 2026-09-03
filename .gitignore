@@ -1,0 +1,13 @@
+# Private/local state must never enter the public repository
+.env
+.env.*
+!.env.example
+.staging/
+.state/
+.public.previous/
+*.log
+*.json
+!package.json
+node_modules/
+__pycache__/
+*.pyc

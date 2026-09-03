@@ -1,0 +1,8 @@
+{
+  "name": "themorningcommit",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "validate": "node scripts/validate-public.mjs"
+  }
+}
