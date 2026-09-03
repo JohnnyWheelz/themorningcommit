@@ -14,6 +14,7 @@ from pathlib import Path
 
 EXPECTED_OWNER = "JohnnyWheelz"
 EXPECTED_REMOTE = "https://github.com/JohnnyWheelz/themorningcommit.git"
+PAGES_PROJECT = "themorningcommit"
 
 
 def run(
@@ -96,20 +97,52 @@ def main() -> int:
 
     expected = (root / "public/index.html").read_bytes()
     expected_hash = hashlib.sha256(expected).hexdigest()
+
+    def live_hash() -> str:
+        request = urllib.request.Request(
+            args.live_url,
+            headers={
+                "User-Agent": "themorningcommit-release-verifier/1.0",
+                "Cache-Control": "no-cache",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return hashlib.sha256(response.read()).hexdigest()
+
+    try:
+        if live_hash() == expected_hash:
+            print(f"ALREADY_PUBLISHED url={args.live_url} sha256={expected_hash}")
+            return 0
+    except Exception:
+        pass
+
+    commit_hash = run(["git", "rev-parse", "HEAD"], root).stdout.strip()
+    commit_message = run(["git", "log", "-1", "--pretty=%s"], root).stdout.strip()
+    run(
+        [
+            "npx",
+            "--no-install",
+            "wrangler",
+            "pages",
+            "deploy",
+            "public",
+            "--project-name",
+            PAGES_PROJECT,
+            "--branch",
+            "main",
+            "--commit-hash",
+            commit_hash,
+            "--commit-message",
+            commit_message,
+            "--commit-dirty=false",
+        ],
+        root,
+    )
     deadline = time.time() + args.timeout
     last = ""
     while time.time() < deadline:
         try:
-            request = urllib.request.Request(
-                args.live_url,
-                headers={
-                    "User-Agent": "themorningcommit-release-verifier/1.0",
-                    "Cache-Control": "no-cache",
-                },
-            )
-            with urllib.request.urlopen(request, timeout=20) as response:
-                body = response.read()
-            received_hash = hashlib.sha256(body).hexdigest()
+            received_hash = live_hash()
             last = received_hash
             if received_hash == expected_hash:
                 print(f"PUBLISHED url={args.live_url} sha256={received_hash}")
