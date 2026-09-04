@@ -16,6 +16,8 @@ from pathlib import Path
 
 EXPECTED_OWNER = "JohnnyWheelz"
 EXPECTED_REMOTE = "https://github.com/JohnnyWheelz/themorningcommit.git"
+EXPECTED_REPOSITORY = "JohnnyWheelz/themorningcommit"
+LIVE_SMOKE_WORKFLOW = "live-smoke.yml"
 PAGES_PROJECT = "themorningcommit"
 
 
@@ -32,6 +34,84 @@ def run(
         detail = (result.stderr or result.stdout).strip()
         raise RuntimeError(f"command failed: {command[0]}: {detail}")
     return result
+
+
+def github_live_smoke(
+    root: Path, env: dict[str, str], commit_hash: str, timeout: int
+) -> str:
+    """Verify the custom domains from an independent GitHub-hosted runner."""
+    list_command = [
+        "gh",
+        "run",
+        "list",
+        "--repo",
+        EXPECTED_REPOSITORY,
+        "--workflow",
+        LIVE_SMOKE_WORKFLOW,
+        "--event",
+        "workflow_dispatch",
+        "--limit",
+        "20",
+        "--json",
+        "databaseId,headSha,status,conclusion,url",
+    ]
+    previous = {
+        item["databaseId"]
+        for item in json.loads(run(list_command, root, env).stdout or "[]")
+    }
+    run(
+        [
+            "gh",
+            "workflow",
+            "run",
+            LIVE_SMOKE_WORKFLOW,
+            "--repo",
+            EXPECTED_REPOSITORY,
+            "--ref",
+            "main",
+        ],
+        root,
+        env,
+    )
+    deadline = time.time() + timeout
+    run_id: int | None = None
+    run_url = ""
+    while time.time() < deadline and run_id is None:
+        items = json.loads(run(list_command, root, env).stdout or "[]")
+        for item in items:
+            if item["databaseId"] not in previous and item["headSha"] == commit_hash:
+                run_id = item["databaseId"]
+                run_url = item["url"]
+                break
+        if run_id is None:
+            time.sleep(2)
+    if run_id is None:
+        raise RuntimeError("external live-smoke run did not appear")
+    while time.time() < deadline:
+        view = json.loads(
+            run(
+                [
+                    "gh",
+                    "run",
+                    "view",
+                    str(run_id),
+                    "--repo",
+                    EXPECTED_REPOSITORY,
+                    "--json",
+                    "status,conclusion,headSha,url",
+                ],
+                root,
+                env,
+            ).stdout
+        )
+        if view["headSha"] != commit_hash:
+            raise RuntimeError("external live-smoke checked the wrong Git commit")
+        if view["status"] == "completed":
+            if view["conclusion"] != "success":
+                raise RuntimeError(f"external live-smoke failed: {view['url']}")
+            return view["url"]
+        time.sleep(3)
+    raise RuntimeError(f"external live-smoke timed out: {run_url}")
 
 
 def main() -> int:
@@ -114,17 +194,28 @@ def main() -> int:
         with urllib.request.urlopen(request, timeout=20) as response:
             return hashlib.sha256(response.read()).hexdigest()
 
+    state_matches = False
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))
-        if (
-            live_hash() == expected_hash
-            and state.get("commit") == commit_hash
+        state_matches = (
+            state.get("commit") == commit_hash
             and state.get("homepage_sha256") == expected_hash
-        ):
+        )
+        if state_matches and live_hash() == expected_hash:
             print(f"ALREADY_PUBLISHED url={args.live_url} sha256={expected_hash}")
             return 0
     except Exception:
         pass
+    if state_matches:
+        try:
+            smoke_url = github_live_smoke(root, env, commit_hash, args.timeout)
+            print(
+                f"ALREADY_PUBLISHED_EXTERNAL url={args.live_url} "
+                f"sha256={expected_hash} verification={smoke_url}"
+            )
+            return 0
+        except Exception:
+            pass
 
     npx_command = ["npx"]
     npx_path = shutil.which("npx")
@@ -152,7 +243,7 @@ def main() -> int:
         ],
         root,
     )
-    deadline = time.time() + args.timeout
+    deadline = time.time() + min(args.timeout, 30)
     last = ""
     while time.time() < deadline:
         try:
@@ -172,9 +263,20 @@ def main() -> int:
         except Exception as exc:
             last = str(exc)
         time.sleep(10)
-    raise RuntimeError(
-        f"live verification failed; expected {expected_hash}, last {last}"
+    smoke_url = github_live_smoke(root, env, commit_hash, max(args.timeout, 60))
+    state_path.write_text(
+        json.dumps(
+            {"commit": commit_hash, "homepage_sha256": expected_hash},
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
     )
+    print(
+        f"PUBLISHED_EXTERNAL url={args.live_url} sha256={expected_hash} "
+        f"verification={smoke_url} local_error={last}"
+    )
+    return 0
 
 
 if __name__ == "__main__":
