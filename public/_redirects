@@ -1,1 +1,1 @@
-https://www.themorningcommit.com/* https://themorningcommit.com/:splat 301
+# Host-level www redirect is handled by functions/_middleware.js.

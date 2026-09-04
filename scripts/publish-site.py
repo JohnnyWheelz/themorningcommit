@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -98,6 +99,9 @@ def main() -> int:
 
     expected = (root / "public/index.html").read_bytes()
     expected_hash = hashlib.sha256(expected).hexdigest()
+    commit_hash = run(["git", "rev-parse", "HEAD"], root).stdout.strip()
+    commit_message = run(["git", "log", "-1", "--pretty=%s"], root).stdout.strip()
+    state_path = root / ".release-state.json"
 
     def live_hash() -> str:
         request = urllib.request.Request(
@@ -111,14 +115,17 @@ def main() -> int:
             return hashlib.sha256(response.read()).hexdigest()
 
     try:
-        if live_hash() == expected_hash:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        if (
+            live_hash() == expected_hash
+            and state.get("commit") == commit_hash
+            and state.get("homepage_sha256") == expected_hash
+        ):
             print(f"ALREADY_PUBLISHED url={args.live_url} sha256={expected_hash}")
             return 0
     except Exception:
         pass
 
-    commit_hash = run(["git", "rev-parse", "HEAD"], root).stdout.strip()
-    commit_message = run(["git", "log", "-1", "--pretty=%s"], root).stdout.strip()
     npx_command = ["npx"]
     npx_path = shutil.which("npx")
     if os.name == "nt" and npx_path:
@@ -152,6 +159,14 @@ def main() -> int:
             received_hash = live_hash()
             last = received_hash
             if received_hash == expected_hash:
+                state_path.write_text(
+                    json.dumps(
+                        {"commit": commit_hash, "homepage_sha256": expected_hash},
+                        sort_keys=True,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
                 print(f"PUBLISHED url={args.live_url} sha256={received_hash}")
                 return 0
         except Exception as exc:
