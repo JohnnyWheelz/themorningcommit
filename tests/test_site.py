@@ -13,6 +13,12 @@ spec.loader.exec_module(build)
 
 
 class SiteBuildTests(unittest.TestCase):
+    def test_write_text_lf_is_platform_stable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "test.txt"
+            build.write_text_lf(target, "one\r\ntwo\rthree\n")
+            self.assertEqual(target.read_bytes(), b"one\ntwo\nthree\n")
+
     def test_parse_date(self) -> None:
         value = build.parse_date("<p><strong>Date</strong><br>September 3, 2026</p>")
         self.assertEqual(value.date().isoformat(), "2026-09-03")

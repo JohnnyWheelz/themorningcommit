@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -118,9 +119,15 @@ def main() -> int:
 
     commit_hash = run(["git", "rev-parse", "HEAD"], root).stdout.strip()
     commit_message = run(["git", "log", "-1", "--pretty=%s"], root).stdout.strip()
+    npx_command = ["npx"]
+    npx_path = shutil.which("npx")
+    if os.name == "nt" and npx_path:
+        npx_cli = Path(npx_path).resolve().parent / "node_modules/npm/bin/npx-cli.js"
+        if npx_cli.is_file():
+            npx_command = ["node", str(npx_cli)]
     run(
-        [
-            "npx",
+        npx_command
+        + [
             "--no-install",
             "wrangler",
             "pages",

@@ -1,0 +1,48 @@
+name: Verify live custom domain
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Wait for the apex edition
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --location \
+              --connect-timeout 10 --max-time 30 \
+              --header 'Cache-Control: no-cache' \
+              https://themorningcommit.com/ -o /tmp/live-index.html; then
+              if cmp --silent public/index.html /tmp/live-index.html; then
+                echo "Apex matches the committed homepage."
+                break
+              fi
+              echo "Attempt ${attempt}: apex responded but content did not match yet."
+            else
+              echo "Attempt ${attempt}: apex is not ready yet."
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "Apex did not converge to the committed homepage." >&2
+              exit 1
+            fi
+            sleep 15
+          done
+      - name: Verify www redirects to apex
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers=$(curl --fail --silent --show-error --head \
+            --connect-timeout 10 --max-time 30 \
+            https://www.themorningcommit.com/)
+          status=$(printf '%s\n' "$headers" | awk 'NR==1 {print $2}')
+          location=$(printf '%s\n' "$headers" | tr -d '\r' | awk 'tolower($1)=="location:" {print $2}')
+          case "$status" in 301|302|307|308) ;; *) echo "Unexpected www status: $status" >&2; exit 1;; esac
+          case "$location" in https://themorningcommit.com/*) ;; *) echo "Unexpected redirect target: $location" >&2; exit 1;; esac

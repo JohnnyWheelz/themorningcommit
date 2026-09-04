@@ -23,6 +23,11 @@ NAV_RE = re.compile(r"\s*<!-- tmc-nav:start -->.*?<!-- tmc-nav:end -->\s*", re.S
 NAV_CSS_RE = re.compile(r"\s*<!-- tmc-nav-css:start -->.*?<!-- tmc-nav-css:end -->\s*", re.S)
 
 
+def write_text_lf(path: Path, content: str) -> None:
+    """Write deterministic UTF-8 bytes without Windows newline translation."""
+    path.write_bytes(content.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8"))
+
+
 def parse_date(raw: str) -> datetime:
     match = DATE_RE.search(raw)
     if not match:
@@ -109,12 +114,8 @@ def main() -> int:
         dated_route = f"/archive/{date:%Y/%m/%d}/"
         archive_path = output / dated_route.strip("/") / "index.html"
         archive_path.parent.mkdir(parents=True, exist_ok=True)
-        archive_path.write_text(
-            decorate(raw, date, SITE + dated_route), encoding="utf-8"
-        )
-        (output / "index.html").write_text(
-            decorate(raw, date, SITE + "/"), encoding="utf-8"
-        )
+        write_text_lf(archive_path, decorate(raw, date, SITE + dated_route))
+        write_text_lf(output / "index.html", decorate(raw, date, SITE + "/"))
 
         dates: list[datetime] = []
         for page in output.glob(
@@ -129,9 +130,7 @@ def main() -> int:
             except ValueError:
                 pass
         (output / "archive").mkdir(exist_ok=True)
-        (output / "archive/index.html").write_text(
-            archive_index(dates), encoding="utf-8"
-        )
+        write_text_lf(output / "archive/index.html", archive_index(dates))
         urls = [SITE + "/", SITE + "/archive/"] + [
             f"{SITE}/archive/{d:%Y/%m/%d}/" for d in sorted(dates, reverse=True)
         ]
@@ -141,13 +140,13 @@ def main() -> int:
             + "".join(f"<url><loc>{escape(url)}</loc></url>\n" for url in urls)
             + "</urlset>\n"
         )
-        (output / "sitemap.xml").write_text(sitemap, encoding="utf-8")
+        write_text_lf(output / "sitemap.xml", sitemap)
         entries = "".join(
             f'<entry><title>themorningcommit — {d:%B} {d.day}, {d:%Y}</title><link href="{SITE}/archive/{d:%Y/%m/%d}/"/><id>{SITE}/archive/{d:%Y/%m/%d}/</id><updated>{d:%Y-%m-%dT12:00:00Z}</updated><summary>{escape(DESCRIPTION)}</summary></entry>'
             for d in sorted(dates, reverse=True)[:20]
         )
         feed = f'''<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom"><title>themorningcommit</title><link href="{SITE}/feed.xml" rel="self"/><link href="{SITE}/"/><id>{SITE}/</id><updated>{date:%Y-%m-%dT12:00:00Z}</updated><subtitle>{escape(DESCRIPTION)}</subtitle>{entries}</feed>'''
-        (output / "feed.xml").write_text(feed, encoding="utf-8")
+        write_text_lf(output / "feed.xml", feed)
 
         backup = root / ".public.previous"
         if backup.exists():
